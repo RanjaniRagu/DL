@@ -1,0 +1,716 @@
+VAE : 
+
+from keras.models import Model
+from keras.datasets import mnist
+from keras.layers import Dense, Input, Conv2D, Flatten, Lambda, Reshape, Conv2DTranspose
+from keras import backend as K
+from keras.losses import binary_crossentropy
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Load MNIST dataset
+(x_train, y_train), (x_test, y_test) = mnist.load_data()
+image_size = x_train.shape[1]
+
+# Reshape input data
+x_train = np.reshape(x_train, [-1, image_size, image_size, 1])
+x_test = np.reshape(x_test, [-1, image_size, image_size, 1])
+
+# Normalize pixel values
+x_train = x_train.astype('float32') / 255
+x_test = x_test.astype('float32') / 255
+
+# Define latent dimension
+latent_dim = 8
+
+# Sampling function
+def sampling(args):
+    z_mean, z_log_var = args
+    batch = K.shape(z_mean)[0]
+    dim = K.int_shape(z_mean)[1]
+    epsilon = K.random_normal(shape=(batch, dim))
+    return z_mean + K.exp(0.5 * z_log_var) * epsilon
+
+# Encoder
+input_img = Input(shape=(image_size, image_size, 1))
+h = Conv2D(16, kernel_size=3, activation='relu', padding='same', strides=2)(input_img)
+enc_output = Conv2D(32, kernel_size=3, activation='relu', padding='same', strides=2)(h)
+shape_before_flattening = K.int_shape(enc_output)
+x = Flatten()(enc_output)
+x = Dense(16, activation='relu')(x)
+z_mean = Dense(latent_dim, name='z_mean')(x)
+z_log_var = Dense(latent_dim, name='z_log_var')(x)
+z = Lambda(sampling, output_shape=(latent_dim,), name='z')([z_mean, z_log_var])
+encoder = Model(input_img, [z_mean, z_log_var, z], name='encoder')
+
+# Decoder
+latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
+x = Dense(np.prod(shape_before_flattening[1:]), activation='relu')(latent_inputs)
+x = Reshape((shape_before_flattening[1], shape_before_flattening[2], shape_before_flattening[3]))(x)
+x = Conv2DTranspose(32, kernel_size=3, activation='relu', strides=2, padding='same')(x)
+x = Conv2DTranspose(16, kernel_size=3, activation='relu', strides=2, padding='same')(x)
+dec_output = Conv2DTranspose(1, kernel_size=3, activation='relu', padding='same')(x)
+decoder = Model(latent_inputs, dec_output, name='decoder')
+
+# VAE
+outputs = decoder(encoder(input_img)[2])
+vae = Model(input_img, outputs, name='vae')
+
+# Losses and training
+reconst_loss = binary_crossentropy(K.flatten(input_img), K.flatten(outputs))
+reconst_loss *= image_size * image_size
+kl_loss = 1 + z_log_var - K.square(z_mean) - K.exp(z_log_var)
+kl_loss = K.sum(kl_loss, axis=-1)
+kl_loss *= -0.5
+vae_loss = K.mean(reconst_loss + kl_loss)
+vae.add_loss(vae_loss)
+vae.compile(optimizer='rmsprop')
+
+# Model summaries
+encoder.summary()
+decoder.summary()
+vae.summary()
+
+# Model training
+vae.fit(x_train, epochs=20, batch_size=128, shuffle=True, validation_data=(x_test, None))
+
+# Visualization
+z_mean, _, _ = encoder.predict(x_test)
+decoded_imgs = decoder.predict(z_mean)
+
+n = 10
+plt.figure(figsize=(20, 4))
+for i in range(n):
+    ax = plt.subplot(2, n, i + 1)
+    plt.imshow(x_test[i].reshape(28, 28))
+    ax.get_xaxis().set_visible(False)
+    ax.get_yaxis().set_visible(False)
+
+    ax = plt.subplot(2, n, i + 1 + n)
+    plt.imshow(decoded_imgs[i].reshape(28, 28))
+    ax.get_xaxis().set_visible(False)
+    ax.get_yaxis().set_visible(False)
+plt.show()
+
+
+
+
+
+
+#GAN
+
+import torch
+
+import torch.nn as nn
+
+import torchvision.transforms as transform
+
+import matplotlib.pyplot as plt
+
+import torchvision
+
+ 
+
+# Set a random seed for reproducibility
+
+torch.manual_seed(111)
+
+ 
+
+# Check if GPU is available, else use CPU
+
+device = ''
+
+if torch.cuda.is_available():
+
+    device = torch.device('cuda')
+
+else:
+
+    device = torch.device('cpu')
+
+ 
+
+# Define data transformations
+
+transform = transform.Compose(
+
+    [transform.ToTensor(), transform.Normalize((0.5,), (0.5,))]
+
+)
+
+ 
+
+# Download and load the MNIST dataset
+
+trainset = torchvision.datasets.MNIST(download=True, transform=transform, root='.', train=True)
+
+ 
+
+# Create a DataLoader for the dataset
+
+loadData = torch.utils.data.DataLoader(
+
+    trainset, shuffle=True, batch_size=32
+
+)
+
+ 
+
+# Display a sample of real images from the dataset
+
+real_sample, label_data = next(iter(loadData))
+
+for i in range(10):
+
+    plt.subplot(4, 4, i + 1)
+
+    plt.imshow(real_sample[i].reshape(28, 28), cmap='gray_r')
+
+plt.show()
+
+ 
+
+# Discriminator class definition
+
+class Discriminator(nn.Module):
+
+    def __init__(self):
+
+        super(Discriminator, self).__init__()
+
+        self.model = nn.Sequential(
+
+            nn.Linear(784, 1024),
+
+            nn.ReLU(),
+
+            nn.Dropout(0.3),
+
+            nn.Linear(1024, 512),
+
+            nn.ReLU(),
+
+            nn.Dropout(0.3),
+
+            nn.Linear(512, 256),
+
+            nn.ReLU(),
+
+            nn.Dropout(0.3),
+
+            nn.Linear(256, 1),
+
+            nn.Sigmoid()
+
+        )
+
+ 
+
+    def forward(self, x):
+
+        X = x.view(x.size(0), 784)
+
+        output = self.model(X)
+
+        return output
+
+ 
+
+# Create an instance of the Discriminator and move it to the specified device
+
+Discriminator_Class = Discriminator().to(device=device)
+
+ 
+
+# Generator class definition
+
+class Generator(nn.Module):
+
+    def __init__(self):
+
+        super(Generator, self).__init__()
+
+        self.model = nn.Sequential(
+
+            nn.Linear(100, 256),
+
+            nn.ReLU(),
+
+            nn.BatchNorm1d(256),
+
+            nn.Linear(256, 512),
+
+            nn.ReLU(),
+
+            nn.BatchNorm1d(512),
+
+            nn.Linear(512, 1024),
+
+            nn.ReLU(),
+
+            nn.BatchNorm1d(1024),
+
+            nn.Linear(1024, 784),
+
+            nn.Tanh()
+
+        )
+
+ 
+
+    def forward(self, x):
+
+        output = self.model(x)
+
+        output = output.view(x.size(0), 1, 28, 28)
+
+        return output
+
+ 
+
+# Create an instance of the Generator and move it to the specified device
+
+Generator_Class = Generator().to(device=device)
+
+ 
+
+# Loss function for both generator and discriminator
+
+lossfunction = nn.BCELoss()
+
+ 
+
+# Optimizers for generator and discriminator
+
+generatoroptim = torch.optim.Adam(Generator_Class.parameters(), lr=0.001)
+
+discrimetoroptim = torch.optim.Adam(Discriminator_Class.parameters(), lr=0.0001)
+
+ 
+
+# Number of training epochs
+
+epochs = 2
+
+ 
+
+# Training loop
+
+for i in range(epochs):
+
+    for n, (real_sample, label_data) in enumerate(loadData):
+
+        # Move real samples to the specified device
+
+        real_sample = real_sample.to(device=device)
+
+       
+
+        # Labels for real samples in discriminator training
+
+        real_sample_label = torch.ones((32, 1)).to(device=device)
+
+       
+
+        # Generate random samples in latent space for generator training
+
+        latent_space_sample = torch.randn((32, 100)).to(device=device)
+
+        generated_samples = Generator_Class(latent_space_sample)
+
+       
+
+        # Labels for generated samples in discriminator training
+
+        generated_samples_labels = torch.zeros((32, 1)).to(device=device)
+
+       
+
+        # Combine real and generated samples, and their labels
+
+        allsample = torch.cat((real_sample, generated_samples))
+
+        allsamplelabel = torch.cat((real_sample_label, generated_samples_labels))
+
+ 
+
+        # Discriminator training
+
+        Discriminator_Class.zero_grad()
+
+        outdiscrim = Discriminator_Class(allsample)
+
+        loss_dis = lossfunction(outdiscrim, allsamplelabel)
+
+        loss_dis.backward()
+
+        discrimetoroptim.step()
+
+ 
+
+        # Generator training
+
+        latent_space = torch.randn((32, 100)).to(device=device)
+
+        Generator_Class.zero_grad()
+
+        genout = Generator_Class(latent_space)
+
+        outdisgen = Discriminator_Class(genout)
+
+       
+
+        # Use real sample labels for generator loss
+
+        loss_gen = lossfunction(outdisgen, real_sample_label)
+
+        loss_gen.backward()
+
+        generatoroptim.step()
+
+ 
+
+        # Print loss for monitoring
+
+        if n == 31:
+
+            print(f"Epoch: {i} Loss D.: {loss_dis}")
+
+            print(f"Epoch: {i} Loss G.: {loss_gen}")
+
+ 
+
+# Generate samples using the trained generator and display them
+
+latent_space_samples = torch.randn(32, 100).to(device=device)
+
+generated_samples = Generator_Class(latent_space_samples)
+
+generated_samples = generated_samples.cpu().detach()
+
+for i in range(16):
+
+    ax = plt.subplot(4, 4, i + 1)
+
+    plt.imshow(generated_samples[i].reshape(28, 28), cmap="gray_r")
+
+    plt.xticks([])
+
+    plt.yticks([])
+
+plt.show()
+
+
+
+
+ 
+ 
+#SIMPLE NN
+
+import numpy as np
+def sigmoid(x):
+        #applying the sigmoid function
+      return 1 / (1 + np.exp(-x))
+def sigmoid_derivative(x):
+        #applying the sigmoid derivative function
+      return x*(1-x)
+    #training data consisting of 4 examples--3 input values and 1 output
+training_inputs = np.array([[0,0,1],
+                                [1,1,1],
+                                [1,0,1],
+                                [0,1,1]])
+training_outputs = np.array([[0,1,1,0]]).T
+np.random.seed(1)
+synaptic_weights = 2 * np.random.random((3, 1)) - 1
+print("Random Generated Weights: ")
+print(synaptic_weights)
+for iteration in range(200000):
+      input_layer=training_inputs
+      outputs=sigmoid(np.dot(input_layer,synaptic_weights))
+      error=training_outputs-outputs
+      adjustments=error*sigmoid_derivative(outputs)
+      synaptic_weights+=np.dot(input_layer.T,adjustments)
+print("synaptic weights after training:")
+print(synaptic_weights)
+print("outputs after training:")
+print(outputs)
+
+
+#PERCEPTRON
+
+mport numpy as np
+x1=np.array([0,0,1,1])
+x2=np.array([0,1,0,1])
+y=np.array([0,1,1,1])
+epochs=int(input("enter the epochs:"))
+bias=1
+l=0.4
+a=[]
+a.append(float(input("enter the weights for bias:")))
+a.append(float(input("enter the weights for x1:")))
+a.append(float(input("enter the weights for x2:")))
+w=np.array(a)
+n=x1.shape[0]
+for k in range(epochs):
+      for i in range(n):
+            f=x1[i]*w[1]+x2[i]*w[2]+bias*w[0]
+            y_out=(f>0).astype("int")
+            error=y[i]-y_out
+            if error!=0:
+                  w[1]=w[1]+l*error*x1[i]
+                  w[2]=w[2]+l*error*x2[i]
+                  w[0]=w[0]+l*error*bias
+            print("--------------------------")
+            print("updated weights after",i+1,"input instance")
+            print("x1 weight",w[1])
+            print("x2 weight",w[2])
+            print("bias weight",w[0])
+print("--------------------------")
+print("final weights after",epochs,"epochs(s)")
+print("updated weight for x1:",w[1])
+print("updated weight for x2:",w[2])
+print("updated weight for bias:",w[0])
+
+
+
+
+
+
+
+#FEED FORWARD
+
+mport numpy as np
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+def sigmoid_derivative(x):
+    return x * (1 - x)
+# Define the neural network architecture
+input_size = 2
+hidden_size = 4
+output_size = 1
+#Initialize the weights and biases with random values
+np.random.seed(1)
+input_weights = np.random.uniform(size=(input_size, hidden_size))
+output_weights = np.random.uniform(size=(hidden_size, output_size))
+input_bias = np.random.uniform(size=(1, hidden_size))
+output_bias = np.random.uniform(size=(1, output_size))
+
+# Define the training data
+X = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
+y = np.array([[0], [1], [1], [0]])
+
+# Training parameters
+learning_rate = 0.1
+epochs = 10000
+
+# Training the neural network
+for epoch in range(epochs):
+    # Forward propagation
+    hidden_layer_input = np.dot(X, input_weights) + input_bias
+    hidden_layer_output = sigmoid(hidden_layer_input)
+    output_layer_input = np.dot(hidden_layer_output, output_weights) + output_bias
+    predicted_output = sigmoid(output_layer_input)
+
+    # Calculate the error
+    error = y - predicted_output
+
+    # Backpropagation
+    d_output = error * sigmoid_derivative(predicted_output)
+    error_hidden_layer = d_output.dot(output_weights.T)
+    d_hidden_layer = error_hidden_layer * sigmoid_derivative(hidden_layer_output)
+
+    # Update weights and biases
+    output_weights += hidden_layer_output.T.dot(d_output) * learning_rate
+    output_bias += np.sum(d_output, axis=0, keepdims=True) * learning_rate
+    input_weights += X.T.dot(d_hidden_layer) * learning_rate
+    input_bias += np.sum(d_hidden_layer, axis=0, keepdims=True) * learning_rate
+
+# Print the final predicted output
+print("Predicted output after training:")
+print(predicted_output)
+
+# Evaluate the trained network's accuracy (you may use a test dataset for this)
+
+
+
+
+
+
+#SOM
+
+
+import numpy as np, numpy.random
+from scipy.spatial import distance
+np.set_printoptions(suppress=True) #Force-suppress all exponential notation
+
+k = 2
+p = 0
+alpha = 0.7 # Initial learning rate
+
+X = np.array([
+        [1,1,0,0],
+        [0,1,0,0],
+        [0,0,1,0],
+        [0,0,1,1]])
+
+
+# Print the number of data and dimension
+n = len(X)
+d = len(X[0])
+#addZeros = np.zeros((n, 1))
+#X = np.append(X, addZeros, axis=1)
+print("The SOM algorithm: \n")
+print("The training data: \n", X)
+print("\nTotal number of data: ",n)
+print("Total number of features: ",d)
+print("Total number of Clusters: ",k)
+
+C = np.zeros((k,d+1))
+
+weight = np.random.rand(n,k)
+print("\nThe initial weight: \n", np.round(weight,2))
+
+for it in range(100): # Total number of iterations
+    for i in range(n):
+        distMin = 99999999
+        for j in range(k):
+            dist = np.square(distance.euclidean(weight[:,j], X[i,0:d]))
+            if distMin>dist:
+                distMin = dist
+                jMin = j
+        weight[:,jMin] = weight[:,jMin]*(1-alpha) + alpha*X[i,0:d]  
+    alpha = 0.5*alpha
+   
+print("\nThe final weight: \n",np.round(weight,4))
+
+
+
+
+
+
+
+ 
+
+#lstm
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from tensorflow import keras
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import LSTM
+df =
+pd.read_csv('/content/monthly_milk_production.csv',index_col='Date
+',parse_dates=True)
+df.index.freq = 'MS'
+df.head()
+# Plotting graph b/w production and date
+df.plot(figsize=(12, 6))
+from statsmodels.tsa.seasonal import seasonal_decompose
+results = seasonal_decompose(df['Production'])
+results.plot()
+train = df.iloc[:156]
+test = df.iloc[156:]
+from sklearn.preprocessing import MinMaxScaler
+scaler = MinMaxScaler()
+scaler.fit(train)
+scaled_train = scaler.transform(train)
+scaled_test = scaler.transform(test)
+from keras.preprocessing.sequence import TimeseriesGenerator
+n_input = 3
+n_features = 1
+generator =
+TimeseriesGenerator(scaled_train,scaled_train,length=n_input,batch
+_size=1)
+X, y = generator[0]
+print(f'Given the Array: \n{X.flatten()}')
+print(f'Predict this y: \n {y}')
+# We do the same thing, but now instead for 12 months
+n_input = 12
+generator =
+TimeseriesGenerator(scaled_train,scaled_train,length=n_input,batch
+_size=1)
+# define model
+model = Sequential()
+model.add(LSTM(100, activation='relu',
+input_shape=(n_input, n_features)))
+model.add(Dense(1))
+model.compile(optimizer='adam', loss='mse')
+model.summary()
+model.fit(generator, epochs=5)
+
+
+
+
+
+
+
+#IMAGE_CLASSISFICATION:
+
+import numpy as np
+import random
+import matplotlib.pyplot as plt
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dense, Flatten
+X_train = np.loadtxt('input.csv', delimiter = ',')
+Y_train = np.loadtxt('labels.csv', delimiter = ',')
+
+X_test = np.loadtxt('input_test.csv', delimiter = ',')
+Y_test = np.loadtxt('labels_test.csv', delimiter = ',')
+X_train = X_train.reshape(len(X_train), 100, 100, 3)
+Y_train = Y_train.reshape(len(Y_train), 1)
+
+X_test = X_test.reshape(len(X_test), 100, 100, 3)
+Y_test = Y_test.reshape(len(Y_test), 1)
+
+X_train = X_train/255.0
+X_test = X_test/255.0
+print("Shape of X_train: ", X_train.shape)
+print("Shape of Y_train: ", Y_train.shape)
+print("Shape of X_test: ", X_test.shape)
+print("Shape of Y_test: ", Y_test.shape)
+idx = random.randint(0, len(X_train))
+plt.imshow(X_train[idx, :])
+plt.show()
+model = Sequential([
+    Conv2D(32, (3,3), activation = 'relu', input_shape = (100, 100, 3)),
+    MaxPooling2D((2,2)),
+
+    Conv2D(32, (3,3), activation = 'relu'),
+    MaxPooling2D((2,2)),
+
+    Flatten(),
+    Dense(64, activation = 'relu'),
+    Dense(1, activation = 'sigmoid')
+])
+model = Sequential()
+
+model.add(Conv2D(32, (3,3), activation = 'relu', input_shape = (100, 100, 3)))
+model.add(MaxPooling2D((2,2)))
+
+model.add(Conv2D(32, (3,3), activation = 'relu'))
+model.add(MaxPooling2D((2,2)))
+
+model.add(Flatten())
+model.add(Dense(64, activation = 'relu'))
+model.add(Dense(1, activation = 'sigmoid'))
+model.compile(loss = 'binary_crossentropy', optimizer = 'adam', metrics = ['accuracy'])
+model.fit(X_train, Y_train, epochs = 5, batch_size = 64)
+model.evaluate(X_test, Y_test)
+idx2 = random.randint(0, len(Y_test))
+plt.imshow(X_test[idx2, :])
+plt.show()
+
+y_pred = model.predict(X_test[idx2, :].reshape(1, 100, 100, 3))
+y_pred = y_pred > 0.5
+
+if(y_pred == 0):
+    pred = 'dog'
+else:
+    pred = 'cat'
+
+print("Our model says it is a :", pred) 
+
+ 
